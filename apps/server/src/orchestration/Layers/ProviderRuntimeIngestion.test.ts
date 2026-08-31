@@ -369,6 +369,51 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("settles the durable session when a turn is aborted", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-aborted");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-aborted-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      payload: {
+        reason: "Interrupted by user.",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "interrupted" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.status).toBe("interrupted");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBeNull();
+    expect(thread.session?.providerName).toBe("opencode");
+    expect(thread.session?.runtimeMode).toBe("approval-required");
+    expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
+    expect(thread.latestTurn?.state).toBe("interrupted");
+    expect(thread.latestTurn?.completedAt).toBe("2026-01-01T00:00:01.000Z");
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";
@@ -994,6 +1039,121 @@ describe("ProviderRuntimeIngestion", () => {
 
     await harness.drain();
     expect(await harness.readModel()).toEqual(initial);
+  });
+
+  it("ignores an aborted event for a different active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const activeTurnId = asTurnId("turn-abort-guarded-main");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-abort-guarded-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: activeTurnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === activeTurnId,
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-guarded-stale"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-abort-guarded-stale"),
+      payload: {
+        reason: "Interrupted by user.",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(activeTurnId);
+  });
+
+  it("ignores an untargeted aborted event while a turn is active", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const activeTurnId = asTurnId("turn-abort-untargeted-active");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-abort-untargeted-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: activeTurnId,
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === activeTurnId,
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-untargeted"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: {
+        reason: "Interrupted by user.",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(activeTurnId);
+  });
+
+  it("rejects an untargeted aborted event while a turn start is pending", async () => {
+    const harness = await createHarness();
+    const seededAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-seed-untargeted-abort"),
+      threadId: ThreadId.make("thread-1"),
+      session: {
+        threadId: ThreadId.make("thread-1"),
+        status: "starting",
+        providerName: "opencode",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        updatedAt: seededAt,
+        lastError: null,
+      },
+      createdAt: seededAt,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-untargeted-pending"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: seededAt,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        reason: "Interrupted by user.",
+      },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {
