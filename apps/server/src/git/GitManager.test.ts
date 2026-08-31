@@ -1909,6 +1909,42 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "status skips a fork's origin default upstream when gh resolves the upstream base",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "git@github.com:contributor/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          upstreamDir,
+        );
+        yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-fork-main", "origin/main"]);
+
+        const { manager, ghCalls } = yield* makeManager();
+        const status = yield* manager.status({ cwd: repoDir });
+
+        expect(status.refName).toBe("feature/from-fork-main");
+        expect(status.pr).toBeNull();
+        expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+      }),
+  );
+
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
