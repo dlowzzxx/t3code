@@ -259,6 +259,9 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const planProgress = await runtime.runPromise(
+      Effect.service(ThreadPlanProgress.ThreadPlanProgressService),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -324,6 +327,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      planProgress,
     };
   }
 
@@ -383,10 +387,12 @@ describe("ProviderRuntimeIngestion", () => {
       turnId,
     });
 
-    await waitForThread(
-      harness.readModel,
-      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    await harness.drain();
+    let thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
     );
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(turnId);
 
     harness.emit({
       type: "turn.aborted",
@@ -400,18 +406,205 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) => entry.session?.status === "interrupted" && entry.session?.activeTurnId === null,
+    await harness.drain();
+    thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
     );
-    expect(thread.session?.status).toBe("interrupted");
-    expect(thread.session?.activeTurnId).toBeNull();
-    expect(thread.session?.lastError).toBeNull();
-    expect(thread.session?.providerName).toBe("opencode");
-    expect(thread.session?.runtimeMode).toBe("approval-required");
-    expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
-    expect(thread.latestTurn?.state).toBe("interrupted");
-    expect(thread.latestTurn?.completedAt).toBe("2026-01-01T00:00:01.000Z");
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.session?.lastError).toBeNull();
+    expect(thread?.session?.providerName).toBe("opencode");
+    expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
+    expect(thread?.latestTurn?.state).toBe("interrupted");
+    expect(thread?.latestTurn?.completedAt).toBe("2026-01-01T00:00:01.000Z");
+  });
+
+  it("persists an OpenCode prompt failure carried by an aborted turn", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-aborted-prompt-failure");
+    const failureReason = "OpenCode prompt submission did not complete within 10 seconds.";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-aborted-prompt-failure-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId,
+    });
+    await harness.drain();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-prompt-failure"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      payload: { reason: failureReason },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("error");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.session?.lastError).toBe(failureReason);
+    expect(thread?.latestTurn?.state).toBe("error");
+  });
+
+  it("finalizes buffered assistant text and proposed plans when a turn is aborted", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-abort-buffered-cleanup");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+    });
+    await harness.drain();
+
+    harness.emit({
+      type: "turn.plan.updated",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup-plan"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+      payload: {
+        explanation: "Working",
+        plan: [
+          { step: "Inspect", status: "completed" },
+          { step: "Apply", status: "in_progress" },
+        ],
+      },
+    });
+    await harness.drain();
+    expect(harness.planProgress.getThreadPlanProgress(threadId)).toMatchObject({
+      step: "Apply",
+      completedSteps: 1,
+      totalSteps: 2,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup-untargeted"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+    expect(harness.planProgress.getThreadPlanProgress(threadId)).not.toBeNull();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup-message"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+      itemId: asItemId("item-abort-buffered-cleanup"),
+      payload: { streamKind: "assistant_text", delta: "partial answer" },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup-proposed-plan"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+      payload: { delta: "# Proposed plan\n\n- Keep the useful work" },
+    });
+    await harness.drain();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-buffered-cleanup"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    const message = thread?.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-abort-buffered-cleanup",
+    );
+    expect(message?.text).toBe("partial answer");
+    expect(message?.streaming).toBe(false);
+    expect(thread?.proposedPlans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "plan:thread-1:turn:turn-abort-buffered-cleanup",
+          planMarkdown: "# Proposed plan\n\n- Keep the useful work",
+        }),
+      ]),
+    );
+    expect(harness.planProgress.getThreadPlanProgress(threadId)).toBeNull();
+  });
+
+  it("completes streamed assistant messages when a turn is aborted", async () => {
+    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-abort-streaming-cleanup");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-abort-streaming-cleanup-started"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+    });
+    await harness.drain();
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turn-abort-streaming-cleanup-message"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: now,
+      turnId,
+      itemId: asItemId("item-abort-streaming-cleanup"),
+      payload: { streamKind: "assistant_text", delta: "streamed answer" },
+    });
+    await harness.drain();
+
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(
+      thread?.messages.find(
+        (entry: ProviderRuntimeTestMessage) =>
+          entry.id === "assistant:item-abort-streaming-cleanup",
+      )?.streaming,
+    ).toBe(true);
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-streaming-cleanup"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    const message = thread?.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-abort-streaming-cleanup",
+    );
+    expect(message?.text).toBe("streamed answer");
+    expect(message?.streaming).toBe(false);
   });
 
   it("applies provider session.state.changed transitions directly", async () => {
@@ -1153,6 +1346,83 @@ describe("ProviderRuntimeIngestion", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
     expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("rejects a named stale abort while a newer turn start is pending", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const pendingTurnId = asTurnId("turn-pending-abort");
+    const staleTurnId = asTurnId("turn-stale-abort");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-pending-abort-guard"),
+      threadId,
+      message: {
+        messageId: asMessageId("message-pending-abort-guard"),
+        role: "user",
+        text: "start the pending turn",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-starting-abort-guard"),
+      threadId,
+      session: {
+        threadId,
+        status: "starting",
+        providerName: "opencode",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: pendingTurnId,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-stale-pending"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt,
+      turnId: staleTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-pending"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: pendingTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("interrupted");
     expect(thread?.session?.activeTurnId).toBeNull();
   });
 
