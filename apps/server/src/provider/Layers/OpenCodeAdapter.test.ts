@@ -19,6 +19,7 @@ import type { PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 
 import {
   ApprovalRequestId,
+  MessageId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1269,6 +1270,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         .sendTurn({
           threadId: asThreadId("thread-send-turn-failure"),
           input: "Fix it",
+          turnStartMessageId: MessageId.make("message-send-turn-failure"),
           modelSelection: {
             instanceId: ProviderInstanceId.make("opencode"),
             model: "openai/gpt-5",
@@ -1291,7 +1293,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
       NodeAssert.equal(typeof sessions[0]?.lastAbortedTurnId, "string");
-      NodeAssert.equal(typeof sessions[0]?.lastAbortedAt, "string");
+      NodeAssert.equal(
+        sessions[0]?.lastAbortedMessageId,
+        MessageId.make("message-send-turn-failure"),
+      );
     }),
   );
 
@@ -3304,6 +3309,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const turn = yield* adapter.sendTurn({
         threadId,
         input: "Keep working",
+        turnStartMessageId: MessageId.make("message-interrupt-idle-race"),
         modelSelection: createModelSelection(
           ProviderInstanceId.make("opencode"),
           "opencode/kimi-k3",
@@ -3338,6 +3344,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.status, "ready");
       NodeAssert.equal(session?.activeTurnId, undefined);
       NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(
+        session?.lastAbortedMessageId,
+        MessageId.make("message-interrupt-idle-race"),
+      );
 
       yield* adapter.stopSession(threadId);
     }),

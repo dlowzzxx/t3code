@@ -1467,8 +1467,13 @@ const make = Effect.gen(function* () {
     const sessions = yield* providerService.listSessions();
     const session = sessions.find((entry) => entry.threadId === threadId);
     return {
-      turnId: session?.activeTurnId ?? session?.lastAbortedTurnId,
-      lastAbortedAt: session?.activeTurnId === undefined ? session?.lastAbortedAt : undefined,
+      activeTurnId: session?.activeTurnId,
+      activeTurnStartMessageId:
+        session?.activeTurnId === undefined ? undefined : session?.activeTurnStartMessageId,
+      lastAbortedTurnId:
+        session?.activeTurnId === undefined ? session?.lastAbortedTurnId : undefined,
+      lastAbortedMessageId:
+        session?.activeTurnId === undefined ? session?.lastAbortedMessageId : undefined,
     };
   });
 
@@ -1480,7 +1485,7 @@ const make = Effect.gen(function* () {
     }
 
     const expectedTurn = yield* getExpectedProviderTurnForThread(threadId);
-    if (!sameId(expectedTurn.turnId, eventTurnId)) {
+    if (!sameId(expectedTurn.activeTurnId, eventTurnId)) {
       return null;
     }
 
@@ -1561,6 +1566,10 @@ const make = Effect.gen(function* () {
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
+      const expectedProviderTurnForStart =
+        event.type === "turn.started" && conflictsWithActiveTurn
+          ? yield* getExpectedProviderTurnForThread(thread.id)
+          : undefined;
 
       // A turn.started that conflicts with the active turn is legitimate when
       // the server itself has a turn start pending for this thread AND the
@@ -1570,7 +1579,8 @@ const make = Effect.gen(function* () {
       // turn.started for some other turn id still gets rejected.
       const conflictingTurnStartIsPendingTurnStart =
         event.type === "turn.started" && conflictsWithActiveTurn
-          ? sameId((yield* getExpectedProviderTurnForThread(thread.id)).turnId, eventTurnId) &&
+          ? expectedProviderTurnForStart !== undefined &&
+            sameId(expectedProviderTurnForStart.activeTurnId, eventTurnId) &&
             Option.isSome(pendingTurnStart)
           : false;
 
@@ -1599,10 +1609,17 @@ const make = Effect.gen(function* () {
               return (
                 eventTurnId !== undefined &&
                 expectedProviderTurn !== undefined &&
-                sameId(expectedProviderTurn.turnId, eventTurnId) &&
+                sameId(
+                  expectedProviderTurn.activeTurnId ?? expectedProviderTurn.lastAbortedTurnId,
+                  eventTurnId,
+                ) &&
                 Option.isSome(pendingTurnStart) &&
-                expectedProviderTurn.lastAbortedAt !== undefined &&
-                expectedProviderTurn.lastAbortedAt >= pendingTurnStart.value.requestedAt
+                sameId(
+                  expectedProviderTurn.activeTurnId !== undefined
+                    ? expectedProviderTurn.activeTurnStartMessageId
+                    : expectedProviderTurn.lastAbortedMessageId,
+                  pendingTurnStart.value.messageId,
+                )
               );
             }
             // Only the active turn may close the lifecycle state.

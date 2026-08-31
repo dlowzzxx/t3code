@@ -1365,7 +1365,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: staleAbortAt,
       updatedAt: staleAbortAt,
       lastAbortedTurnId: staleTurnId,
-      lastAbortedAt: staleAbortAt,
+      lastAbortedMessageId: asMessageId("message-old-abort"),
     });
 
     await harness.dispatch({
@@ -1423,7 +1423,7 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt,
       updatedAt: "2026-01-01T00:00:02.000Z",
       lastAbortedTurnId: pendingTurnId,
-      lastAbortedAt: "2026-01-01T00:00:02.000Z",
+      lastAbortedMessageId: asMessageId("message-pending-abort-guard"),
     });
     harness.emit({
       type: "turn.aborted",
@@ -1431,6 +1431,120 @@ describe("ProviderRuntimeIngestion", () => {
       provider: ProviderDriverKind.make("opencode"),
       threadId,
       createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: pendingTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("requires the pending start token for active provider aborts", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const pendingTurnId = asTurnId("turn-pending-active-token");
+    const oldTurnId = asTurnId("turn-old-active-token");
+    const pendingMessageId = asMessageId("message-pending-active-token");
+    const oldMessageId = asMessageId("message-old-active-token");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-active-token-guard"),
+      threadId,
+      message: {
+        messageId: pendingMessageId,
+        role: "user",
+        text: "start the pending turn",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-starting-active-token-guard"),
+      threadId,
+      session: {
+        threadId,
+        status: "starting",
+        providerName: "opencode",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: oldTurnId,
+      activeTurnStartMessageId: oldMessageId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-active-old-token"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: oldTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: pendingTurnId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-active-missing-token"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+      turnId: pendingTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: pendingTurnId,
+      activeTurnStartMessageId: pendingMessageId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-active-current-token"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:03.000Z",
       turnId: pendingTurnId,
       payload: { reason: "Interrupted by user." },
     });
