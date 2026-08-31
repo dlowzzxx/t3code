@@ -1467,6 +1467,7 @@ const make = Effect.gen(function* () {
     const sessions = yield* providerService.listSessions();
     const session = sessions.find((entry) => entry.threadId === threadId);
     return {
+      provider: session?.provider,
       activeTurnId: session?.activeTurnId,
       activeTurnStartMessageId:
         session?.activeTurnId === undefined ? undefined : session?.activeTurnStartMessageId,
@@ -1614,12 +1615,13 @@ const make = Effect.gen(function* () {
                   eventTurnId,
                 ) &&
                 Option.isSome(pendingTurnStart) &&
-                sameId(
-                  expectedProviderTurn.activeTurnId !== undefined
-                    ? expectedProviderTurn.activeTurnStartMessageId
-                    : expectedProviderTurn.lastAbortedMessageId,
-                  pendingTurnStart.value.messageId,
-                )
+                (expectedProviderTurn.provider !== "opencode" ||
+                  sameId(
+                    expectedProviderTurn.activeTurnId !== undefined
+                      ? expectedProviderTurn.activeTurnStartMessageId
+                      : expectedProviderTurn.lastAbortedMessageId,
+                    pendingTurnStart.value.messageId,
+                  ))
               );
             }
             // Only the active turn may close the lifecycle state.

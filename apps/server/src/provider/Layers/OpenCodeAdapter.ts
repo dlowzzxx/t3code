@@ -2222,6 +2222,7 @@ export function makeOpenCodeAdapter(
             yield* updateProviderSession(context, {
               status: "running",
               activeTurnId: turnId,
+              activeTurnStartMessageId: context.activeTurnStartMessageId,
             });
           }
 

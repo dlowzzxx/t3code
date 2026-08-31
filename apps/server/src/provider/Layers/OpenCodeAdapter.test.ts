@@ -1383,6 +1383,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer-idle-admission");
+      const activeTurnStartMessageId = MessageId.make("message-steer-idle-admission");
       const busyBeforeSteer = promiseWithResolvers<unknown>();
       const idleBeforeSteer = promiseWithResolvers<unknown>();
       const idleAfterSteer = promiseWithResolvers<unknown>();
@@ -1429,6 +1430,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const activeTurn = yield* adapter.sendTurn({
         threadId,
         input: "Start the next turn",
+        turnStartMessageId: activeTurnStartMessageId,
         modelSelection: createModelSelection(
           ProviderInstanceId.make("opencode"),
           "opencode/kimi-k3",
@@ -1451,6 +1453,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
       });
       yield* Effect.promise(() => statusStarted.promise);
+      yield* Effect.yieldNow;
+      const sessionAfterBusy = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterBusy?.activeTurnId, activeTurn.turnId);
+      NodeAssert.equal(sessionAfterBusy?.activeTurnStartMessageId, activeTurnStartMessageId);
       const steerFiber = yield* adapter
         .sendTurn({
           threadId,

@@ -455,6 +455,70 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.latestTurn?.state).toBe("error");
   });
 
+  it("accepts a named Codex abort during a pending turn start without a message token", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-codex-aborted-pending");
+    const messageId = asMessageId("message-codex-aborted-pending");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const abortReason = "Codex cancelled the turn after the user stopped it.";
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-codex-abort"),
+      threadId,
+      message: {
+        messageId,
+        role: "user",
+        text: "start the Codex turn",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-starting-codex-abort"),
+      threadId,
+      session: {
+        threadId,
+        status: "starting",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: "previous provider error",
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: turnId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-codex-pending"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId,
+      payload: { reason: abortReason },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.session?.lastError).toBeNull();
+    expect(thread?.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
+  });
+
   it("finalizes buffered assistant text and proposed plans when a turn is aborted", async () => {
     const harness = await createHarness();
     const threadId = asThreadId("thread-1");
