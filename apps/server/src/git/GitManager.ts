@@ -232,7 +232,16 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}${pullRequest.number}/${suffix}`;
+}
+
+const PULL_REQUEST_WORKTREE_BRANCH_PREFIX = "t3code/pr-";
+const PULL_REQUEST_WORKTREE_BRANCH_PATTERN = new RegExp(
+  `^${PULL_REQUEST_WORKTREE_BRANCH_PREFIX}\\d+/`,
+);
+
+function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
+  return PULL_REQUEST_WORKTREE_BRANCH_PATTERN.test(branch);
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -1017,7 +1026,9 @@ export const make = Effect.gen(function* () {
         if (
           headContext.headBranch !== details.branch &&
           upstreamHeadIsDefault &&
-          (!headContext.isCrossRepository || headContext.remoteName === "origin")
+          (!headContext.isCrossRepository ||
+            (headContext.remoteName === "origin" &&
+              !isPullRequestWorktreeLocalBranchName(details.branch)))
         ) {
           return { latest: null, headContext };
         }
