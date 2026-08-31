@@ -1410,6 +1410,18 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.activeTurnId).toBeNull();
 
+    // OpenCode clears activeTurnId before its queued turn.aborted event is
+    // ingested. The terminal ID keeps a legitimate abort correlated to the
+    // pending durable turn without reopening the stale-abort race.
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      lastAbortedTurnId: pendingTurnId,
+    });
     harness.emit({
       type: "turn.aborted",
       eventId: asEventId("evt-turn-abort-pending"),

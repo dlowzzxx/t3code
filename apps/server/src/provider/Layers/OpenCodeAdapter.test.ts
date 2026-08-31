@@ -3335,6 +3335,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const session = sessions.find((candidate) => candidate.threadId === threadId);
       NodeAssert.equal(session?.status, "ready");
       NodeAssert.equal(session?.activeTurnId, undefined);
+      NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
 
       yield* adapter.stopSession(threadId);
     }),

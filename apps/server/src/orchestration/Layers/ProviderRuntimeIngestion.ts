@@ -1465,7 +1465,7 @@ const make = Effect.gen(function* () {
     function* (threadId: ThreadId) {
       const sessions = yield* providerService.listSessions();
       const session = sessions.find((entry) => entry.threadId === threadId);
-      return session?.activeTurnId;
+      return session?.activeTurnId ?? session?.lastAbortedTurnId;
     },
   );
 

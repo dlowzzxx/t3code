@@ -678,6 +678,9 @@ function applyProviderSessionUpdate(
   if (options?.clearActiveTurnId) {
     delete mutableSession.activeTurnId;
   }
+  if (patch.activeTurnId !== undefined) {
+    delete mutableSession.lastAbortedTurnId;
+  }
   if (options?.clearLastError) {
     delete mutableSession.lastError;
   }
@@ -1413,7 +1416,7 @@ export function makeOpenCodeAdapter(
         context.activeVariant = undefined;
         yield* updateProviderSession(
           context,
-          { status: "ready" },
+          { status: "ready", lastAbortedTurnId: turnId },
           { clearActiveTurnId: true, clearLastError: true },
         );
       }
@@ -2829,6 +2832,7 @@ export function makeOpenCodeAdapter(
                           status: "ready",
                           model: modelSelection?.model ?? context.session.model,
                           lastError: requestError.detail,
+                          lastAbortedTurnId: turnId,
                         },
                         { clearActiveTurnId: true },
                       );
@@ -2875,6 +2879,7 @@ export function makeOpenCodeAdapter(
                         status: "ready",
                         model: modelSelection?.model ?? context.session.model,
                         lastError: requestError.detail,
+                        lastAbortedTurnId: turnId,
                       },
                       { clearActiveTurnId: true },
                     );
