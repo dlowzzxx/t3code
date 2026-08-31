@@ -1290,6 +1290,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
+      NodeAssert.equal(typeof sessions[0]?.lastAbortedTurnId, "string");
+      NodeAssert.equal(typeof sessions[0]?.lastAbortedAt, "string");
     }),
   );
 

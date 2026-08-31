@@ -47,6 +47,7 @@ export const ProviderSession = Schema.Struct({
   // Retained after a provider abort clears its active turn so consumers can
   // correlate the terminal event with a pending durable turn start.
   lastAbortedTurnId: Schema.optional(TurnId),
+  lastAbortedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),

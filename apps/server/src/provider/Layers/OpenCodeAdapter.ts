@@ -680,6 +680,10 @@ function applyProviderSessionUpdate(
   }
   if (patch.activeTurnId !== undefined) {
     delete mutableSession.lastAbortedTurnId;
+    delete mutableSession.lastAbortedAt;
+  }
+  if (patch.lastAbortedTurnId !== undefined) {
+    mutableSession.lastAbortedAt = updatedAt;
   }
   if (options?.clearLastError) {
     delete mutableSession.lastError;

@@ -1355,6 +1355,18 @@ describe("ProviderRuntimeIngestion", () => {
     const pendingTurnId = asTurnId("turn-pending-abort");
     const staleTurnId = asTurnId("turn-stale-abort");
     const createdAt = "2026-01-01T00:00:00.000Z";
+    const staleAbortAt = "2025-12-31T23:59:59.000Z";
+
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt: staleAbortAt,
+      updatedAt: staleAbortAt,
+      lastAbortedTurnId: staleTurnId,
+      lastAbortedAt: staleAbortAt,
+    });
 
     await harness.dispatch({
       type: "thread.turn.start",
@@ -1385,22 +1397,12 @@ describe("ProviderRuntimeIngestion", () => {
       },
       createdAt,
     });
-    harness.setProviderSession({
-      provider: ProviderDriverKind.make("opencode"),
-      status: "running",
-      runtimeMode: "approval-required",
-      threadId,
-      createdAt,
-      updatedAt: createdAt,
-      activeTurnId: pendingTurnId,
-    });
-
     harness.emit({
       type: "turn.aborted",
       eventId: asEventId("evt-turn-abort-stale-pending"),
       provider: ProviderDriverKind.make("opencode"),
       threadId,
-      createdAt,
+      createdAt: "2026-01-01T00:00:01.000Z",
       turnId: staleTurnId,
       payload: { reason: "Interrupted by user." },
     });
@@ -1419,8 +1421,9 @@ describe("ProviderRuntimeIngestion", () => {
       runtimeMode: "approval-required",
       threadId,
       createdAt,
-      updatedAt: createdAt,
+      updatedAt: "2026-01-01T00:00:02.000Z",
       lastAbortedTurnId: pendingTurnId,
+      lastAbortedAt: "2026-01-01T00:00:02.000Z",
     });
     harness.emit({
       type: "turn.aborted",
