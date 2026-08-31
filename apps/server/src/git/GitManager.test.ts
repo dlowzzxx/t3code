@@ -1910,7 +1910,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   );
 
   it.effect(
-    "status skips a fork's origin default upstream when gh resolves the upstream base",
+    "status skips a fork feature branch's default upstream regardless of remote alias",
     () =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -1918,10 +1918,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const originDir = yield* createBareRemote();
         const upstreamDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", originDir]);
         yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
         yield* configureVisibleRemoteUrlWithLocalRewrite(
           repoDir,
           "origin",
+          "git@github.com:contributor/codething-mvp.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
           "git@github.com:contributor/codething-mvp.git",
           originDir,
         );
@@ -1932,9 +1939,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           upstreamDir,
         );
         yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
-        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
-        yield* runGit(repoDir, ["checkout", "-b", "feature/from-fork-main", "origin/main"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "fork", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-fork-main", "fork/main"]);
 
         const { manager, ghCalls } = yield* makeManager();
         const status = yield* manager.status({ cwd: repoDir });

@@ -1026,9 +1026,7 @@ export const make = Effect.gen(function* () {
         if (
           headContext.headBranch !== details.branch &&
           upstreamHeadIsDefault &&
-          (!headContext.isCrossRepository ||
-            (headContext.remoteName === "origin" &&
-              !isPullRequestWorktreeLocalBranchName(details.branch)))
+          !isPullRequestWorktreeLocalBranchName(details.branch)
         ) {
           return { latest: null, headContext };
         }
