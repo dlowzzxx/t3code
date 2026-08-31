@@ -614,6 +614,15 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // Connected claude.ai MCP servers are discovered outside filesystem
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+      // Disable Claude's IDE detection (tasklist | findstr) and related
+      // auto-install hooks. The probe fires every few minutes and each
+      // detection spawns tasklist.exe/findstr.exe (and git.exe) children on
+      // Windows that can remain orphaned when the probe completes, times
+      // out, or is aborted (#8575). These vars mirror the manual workaround
+      // and prevent the child processes from ever spawning.
+      CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
+      FORCE_CODE_TERMINAL: "1",
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
     stderr: () => {},
@@ -727,14 +736,20 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
-) => {
-  const abort = new AbortController();
-  return Effect.gen(function* () {
+) =>
+  Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    const abort = new AbortController();
+    // The SDK query owns the Claude CLI child process. On Windows the CLI
+    // spawns IDE-detection children (tasklist.exe | findstr.exe) and git
+    // probes that become orphaned if the parent is aborted without a tree
+    // kill. Aborting the controller terminates the entire query, and the
+    // ensuring finalizer guarantees the abort runs on success, failure,
+    // timeout, or fiber interruption so no child tree is left behind (#8575).
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -766,21 +781,17 @@ const probeClaudeCapabilities = (
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
-    });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => abort.abort())),
+      Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
+    );
   }).pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (!abort.signal.aborted) abort.abort();
-      }),
-    ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
     Effect.result,
     Effect.map((result) => {
       if (Result.isFailure(result)) return undefined;
       return Option.isSome(result.success) ? result.success.value : undefined;
     }),
   );
-};
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
