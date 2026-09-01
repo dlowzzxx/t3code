@@ -52,6 +52,8 @@ const makeServerExposureLayer = (mode: DesktopServerExposureModeLiteral) =>
       tailscaleServeEnabled: true,
       tailscaleServePort: 8443,
     }),
+    backendProxyOrigin: Effect.succeed(new URL("http://127.0.0.1:4888")),
+    noteResolvedBackendOrigin: () => Effect.void,
     configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
     setMode: () => Effect.die("unexpected setMode"),
     setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),

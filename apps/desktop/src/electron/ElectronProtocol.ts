@@ -51,6 +51,12 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedErrorClass
 export interface DesktopProtocolRegistrationInput {
   readonly scheme: string;
   readonly targetOrigin: URL;
+  // Optional per-request override consulted before falling back to
+  // `targetOrigin`. The protocol is registered once during bootstrap, but the
+  // backend it proxies to can report a different renderer-visible URL when it
+  // becomes ready (the WSL backend reports its distro IP instead of the
+  // loopback URL), so the proxy target has to follow that resolution.
+  readonly getTargetOrigin?: () => URL | undefined;
   readonly backendOrigin: URL;
   readonly clerkFrontendApiHostname: string | undefined;
 }
@@ -142,13 +148,18 @@ async function proxyRequest(
   request: Request,
   targetOrigin: URL,
   contentSecurityPolicy: string,
+  getTargetOrigin?: () => URL | undefined,
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
   if (requestUrl.host !== DESKTOP_HOST) {
     return new Response(null, { status: 404 });
   }
 
-  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
+  const effectiveTargetOrigin = getTargetOrigin?.() ?? targetOrigin;
+  const targetUrl = new URL(
+    `${requestUrl.pathname}${requestUrl.search}`,
+    effectiveTargetOrigin,
+  );
   const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
   for (const name of headers.keys()) {
@@ -216,7 +227,7 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, (request) =>
-              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+              proxyRequest(request, input.targetOrigin, contentSecurityPolicy, input.getTargetOrigin),
             );
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
