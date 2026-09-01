@@ -1339,6 +1339,57 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("preserves the original turn token through steering and abort", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-steer-abort-token");
+      const originalTurnStartMessageId = MessageId.make("message-original-turn");
+      const steeringTurnStartMessageId = MessageId.make("message-steering-turn");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run 5 commands",
+        turnStartMessageId: originalTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      const sessionAfterTurn = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterTurn?.activeTurnStartMessageId, originalTurnStartMessageId);
+
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "actually run 15",
+        turnStartMessageId: steeringTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      NodeAssert.equal(String(steeredTurn.turnId), String(turn.turnId));
+
+      const sessionAfterSteer = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterSteer?.activeTurnStartMessageId, originalTurnStartMessageId);
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      const sessionAfterAbort = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      NodeAssert.equal(sessionAfterAbort?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(sessionAfterAbort?.lastAbortedMessageId, originalTurnStartMessageId);
+    }),
+  );
+
   it.effect("keeps the running turn when a steer prompt fails", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
