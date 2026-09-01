@@ -1982,7 +1982,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
             prListByHeadSelector: {
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              // @effect-diagnostics-next-line preferSchemaOverJson:off - fake gh output is intentionally raw JSON.
               "contributor:main": JSON.stringify([
                 {
                   number: 200,
