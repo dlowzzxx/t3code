@@ -1390,6 +1390,55 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("preserves the original turn token through a steering timeout", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-steer-timeout-token");
+      const originalTurnStartMessageId = MessageId.make("message-original-timeout-turn");
+      const steeringTurnStartMessageId = MessageId.make("message-steering-timeout-turn");
+      const promptStarted = promiseWithResolvers<void>();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "run 5 commands",
+        turnStartMessageId: originalTurnStartMessageId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        promptStarted.resolve(undefined);
+        await new Promise<void>(() => {});
+      };
+
+      const steeringFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "actually run 15",
+          turnStartMessageId: steeringTurnStartMessageId,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "openai/gpt-5",
+          },
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => promptStarted.promise);
+      yield* advanceTestClock(10_000);
+
+      const steeringResult = yield* Fiber.join(steeringFiber);
+      NodeAssert.equal(steeringResult._tag, "Failure");
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
+      NodeAssert.equal(session?.lastAbortedMessageId, originalTurnStartMessageId);
+    }),
+  );
+
   it.effect("keeps the running turn when a steer prompt fails", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

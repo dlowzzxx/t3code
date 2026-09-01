@@ -2925,8 +2925,8 @@ export function makeOpenCodeAdapter(
                         model: modelSelection?.model ?? context.session.model,
                         lastError: requestError.detail,
                         lastAbortedTurnId: turnId,
-                        ...(input.turnStartMessageId !== undefined
-                          ? { lastAbortedMessageId: input.turnStartMessageId }
+                        ...(turnStartMessageId !== undefined
+                          ? { lastAbortedMessageId: turnStartMessageId }
                           : {}),
                       },
                       { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },

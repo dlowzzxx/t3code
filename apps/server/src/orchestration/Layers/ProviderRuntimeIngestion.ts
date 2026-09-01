@@ -1552,17 +1552,35 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
-        event.type === "turn.completed"
+        event.type === "turn.completed" ||
+        event.type === "turn.aborted"
           ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
               threadId: thread.id,
             })
           : Option.none();
-      const hasPendingTurnStart =
-        Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
+      const hasPendingTurnStart = Option.isSome(pendingTurnStart);
+      const hasPendingTurnStartWhileStarting =
+        hasPendingTurnStart && thread.session?.status === "starting";
       const expectedProviderTurn =
-        event.type === "turn.aborted" && hasPendingTurnStart
+        (event.type === "turn.aborted" && hasPendingTurnStart) ||
+        (event.type === "turn.started" && activeTurnId === null)
           ? yield* getExpectedProviderTurnForThread(thread.id)
           : undefined;
+
+      const turnStartedMatchesRetainedAbort =
+        event.type === "turn.started" &&
+        activeTurnId === null &&
+        eventTurnId !== undefined &&
+        expectedProviderTurn !== undefined &&
+        sameId(expectedProviderTurn.lastAbortedTurnId, eventTurnId);
+      const pendingTurnStartMatchesRetainedAbort =
+        event.type === "turn.aborted" &&
+        Option.isSome(pendingTurnStart) &&
+        expectedProviderTurn !== undefined &&
+        expectedProviderTurn.activeTurnId === undefined &&
+        eventTurnId !== undefined &&
+        sameId(expectedProviderTurn.lastAbortedTurnId, eventTurnId) &&
+        !sameId(expectedProviderTurn.lastAbortedMessageId, pendingTurnStart.value.messageId);
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1596,10 +1614,16 @@ const make = Effect.gen(function* () {
           case "thread.started":
             return true;
           case "turn.started":
-            return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+            return (
+              !turnStartedMatchesRetainedAbort &&
+              (!conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart)
+            );
           case "turn.completed":
           case "turn.aborted":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+              return false;
+            }
+            if (pendingTurnStartMatchesRetainedAbort) {
               return false;
             }
             // A named abort may arrive after the server has requested a new
@@ -1658,7 +1682,9 @@ const make = Effect.gen(function* () {
           switch (event.type) {
             case "session.state.changed": {
               const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
-              return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
+              return hasPendingTurnStartWhileStarting && runtimeStatus === "ready"
+                ? "starting"
+                : runtimeStatus;
             }
             case "turn.started":
               return "running";
@@ -1674,7 +1700,11 @@ const make = Effect.gen(function* () {
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
               // active or pending turn; preserve that lifecycle state.
-              return activeTurnId !== null ? "running" : hasPendingTurnStart ? "starting" : "ready";
+              return activeTurnId !== null
+                ? "running"
+                : hasPendingTurnStartWhileStarting
+                  ? "starting"
+                  : "ready";
           }
         })();
         const nextActiveTurnId =
