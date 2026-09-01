@@ -462,7 +462,7 @@ export const make = Effect.gen(function* () {
     return Option.isSome(resolved) ? resolved.value : (yield* Ref.get(stateRef)).httpBaseUrl;
   });
   const noteResolvedBackendOrigin = (origin: URL): Effect.Effect<void> =>
-    Ref.set(Option.some(origin), resolvedBackendOriginRef);
+    Ref.set(resolvedBackendOriginRef, Option.some(origin));
 
   const setMode = Effect.fn("desktop.serverExposure.setMode")(function* (
     mode: DesktopServerExposureMode,
