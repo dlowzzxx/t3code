@@ -1083,6 +1083,93 @@ describe("CheckpointReactor", () => {
     ).toBe(false);
   });
 
+  it("does not restore the workspace when the provider rejects the conversation rollback", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-rejected-rollback"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-rejected-1"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-rejected-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-diff-rejected-2"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-rejected-2"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 2,
+        createdAt,
+      }),
+    );
+
+    harness.provider.rollbackConversation.mockImplementation(
+      () =>
+        Effect.fail(
+          new Error(
+            "Provider adapter request failed (codex) for thread/rollback: paginated threads do not support thread/rollback",
+          ),
+        ) as unknown as Effect.Effect<void>,
+    );
+
+    const readmeBeforeRevert = NodeFS.readFileSync(
+      NodePath.join(harness.cwd, "README.md"),
+      "utf8",
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-request-rejected"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    );
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(
+      thread.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
+    ).toBe(true);
+    expect(
+      NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8"),
+    ).toBe(readmeBeforeRevert);
+  });
+
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

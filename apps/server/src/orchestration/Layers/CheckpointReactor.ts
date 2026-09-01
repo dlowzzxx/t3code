@@ -755,6 +755,37 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Fail before mutating anything when the target filesystem checkpoint is
+    // already gone from the store (the read model can outlive it). Turn 0 is
+    // excluded because restoreCheckpoint falls back to HEAD there.
+    if (
+      event.payload.turnCount > 0 &&
+      !(yield* checkpointStore.hasCheckpointRef({
+        cwd: sessionRuntime.value.cwd,
+        checkpointRef: targetCheckpointRef,
+      }))
+    ) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    // Roll the provider conversation back before restoring files: a provider
+    // that rejects the rollback (Codex refuses thread/rollback for paginated
+    // threads) must leave both the conversation and the workspace untouched
+    // instead of restoring files the conversation never rewound.
+    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
+    if (rolledBackTurns > 0) {
+      yield* providerService.rollbackConversation({
+        threadId: sessionRuntime.value.threadId,
+        numTurns: rolledBackTurns,
+      });
+    }
+
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
@@ -773,14 +804,6 @@ const make = Effect.gen(function* () {
     // Refresh the workspace entry index so the @-mention file picker
     // reflects the reverted filesystem state.
     yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
-
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
 
     const staleCheckpointRefs: Array<CheckpointRef> = [];
     for (const checkpoint of thread.checkpoints) {
