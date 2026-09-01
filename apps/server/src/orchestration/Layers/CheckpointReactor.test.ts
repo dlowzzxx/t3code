@@ -55,6 +55,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderAdapterRequestError, type ProviderServiceError } from "../../provider/Errors.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ServerConfig } from "../../config.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
@@ -85,7 +86,10 @@ function createProviderServiceHarness(
   const now = "2026-01-01T00:00:00.000Z";
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const rollbackConversation = vi.fn(
-    (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
+    (_input: {
+      readonly threadId: ThreadId;
+      readonly numTurns: number;
+    }): Effect.Effect<void, ProviderServiceError> => Effect.void,
   );
 
   const unsupported = <A>() =>
@@ -1134,18 +1138,22 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.rollbackConversation.mockImplementation(
-      () =>
-        Effect.fail(
-          new Error(
-            "Provider adapter request failed (codex) for thread/rollback: paginated threads do not support thread/rollback",
-          ),
-        ) as unknown as Effect.Effect<void>,
+    harness.provider.rollbackConversation.mockImplementation(() =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: "codex",
+          method: "thread/rollback",
+          detail: "paginated threads do not support thread/rollback",
+        }),
+      ),
     );
 
-    const readmeBeforeRevert = NodeFS.readFileSync(
-      NodePath.join(harness.cwd, "README.md"),
-      "utf8",
+    // Git checkpoint restore can rewrite LF as CRLF under core.autocrlf, so
+    // compare line-ending-normalized content when asserting the workspace is
+    // back to its pre-revert state.
+    const normalize = (value: string): string => value.replace(/\r\n/g, "\n");
+    const readmeBeforeRevert = normalize(
+      NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8"),
     );
 
     await Effect.runPromise(
@@ -1166,7 +1174,7 @@ describe("CheckpointReactor", () => {
       thread.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
     ).toBe(true);
     expect(
-      NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8"),
+      normalize(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")),
     ).toBe(readmeBeforeRevert);
   });
 
