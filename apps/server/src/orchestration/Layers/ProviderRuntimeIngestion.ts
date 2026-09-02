@@ -1581,6 +1581,11 @@ const make = Effect.gen(function* () {
         eventTurnId !== undefined &&
         sameId(expectedProviderTurn.lastAbortedTurnId, eventTurnId) &&
         !sameId(expectedProviderTurn.lastAbortedMessageId, pendingTurnStart.value.messageId);
+      const pendingTurnStartConflictsWithActiveProviderTurn =
+        event.type === "turn.aborted" &&
+        Option.isSome(pendingTurnStart) &&
+        expectedProviderTurn?.activeTurnId !== undefined &&
+        !sameId(expectedProviderTurn.activeTurnId, eventTurnId);
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1621,6 +1626,9 @@ const make = Effect.gen(function* () {
           case "turn.completed":
           case "turn.aborted":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
+              return false;
+            }
+            if (pendingTurnStartConflictsWithActiveProviderTurn) {
               return false;
             }
             if (pendingTurnStartMatchesRetainedAbort) {

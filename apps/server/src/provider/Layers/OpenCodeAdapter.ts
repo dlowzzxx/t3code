@@ -2741,7 +2741,7 @@ export function makeOpenCodeAdapter(
           const turnStartMessageId =
             steeringTurnId === undefined
               ? input.turnStartMessageId
-              : (context.activeTurnStartMessageId ?? input.turnStartMessageId);
+              : (input.turnStartMessageId ?? context.activeTurnStartMessageId);
           const turnId = steeringTurnId ?? freshTurnId;
           const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
           const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
@@ -2874,8 +2874,8 @@ export function makeOpenCodeAdapter(
                           model: modelSelection?.model ?? context.session.model,
                           lastError: requestError.detail,
                           lastAbortedTurnId: turnId,
-                          ...(input.turnStartMessageId !== undefined
-                            ? { lastAbortedMessageId: input.turnStartMessageId }
+                          ...(turnStartMessageId !== undefined
+                            ? { lastAbortedMessageId: turnStartMessageId }
                             : {}),
                         },
                         { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },

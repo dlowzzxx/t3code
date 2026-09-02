@@ -1339,7 +1339,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("preserves the original turn token through steering and abort", () =>
+  it.effect("uses the steering turn token through steering and abort", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer-abort-token");
@@ -1379,18 +1379,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const sessionAfterSteer = (yield* adapter.listSessions()).find(
         (entry) => entry.threadId === threadId,
       );
-      NodeAssert.equal(sessionAfterSteer?.activeTurnStartMessageId, originalTurnStartMessageId);
+      NodeAssert.equal(sessionAfterSteer?.activeTurnStartMessageId, steeringTurnStartMessageId);
 
       yield* adapter.interruptTurn(threadId, turn.turnId);
       const sessionAfterAbort = (yield* adapter.listSessions()).find(
         (entry) => entry.threadId === threadId,
       );
       NodeAssert.equal(sessionAfterAbort?.lastAbortedTurnId, turn.turnId);
-      NodeAssert.equal(sessionAfterAbort?.lastAbortedMessageId, originalTurnStartMessageId);
+      NodeAssert.equal(sessionAfterAbort?.lastAbortedMessageId, steeringTurnStartMessageId);
     }),
   );
 
-  it.effect("preserves the original turn token through a steering timeout", () =>
+  it.effect("uses the steering turn token through a steering timeout", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-steer-timeout-token");
@@ -1435,7 +1435,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(steeringResult._tag, "Failure");
       const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
       NodeAssert.equal(session?.lastAbortedTurnId, turn.turnId);
-      NodeAssert.equal(session?.lastAbortedMessageId, originalTurnStartMessageId);
+      NodeAssert.equal(session?.lastAbortedMessageId, steeringTurnStartMessageId);
     }),
   );
 
