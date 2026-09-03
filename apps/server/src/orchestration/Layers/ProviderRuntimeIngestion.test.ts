@@ -1683,6 +1683,100 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.session?.activeTurnId).toBeNull();
   });
 
+  it("rejects a targeted abort that does not match the pending provider turn", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const liveTurnId = asTurnId("turn-pending-provider-live");
+    const staleTurnId = asTurnId("turn-pending-provider-stale");
+    const pendingMessageId = asMessageId("message-pending-provider-match");
+    const liveMessageId = asMessageId("message-live-provider-turn");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-pending-provider-match"),
+      threadId,
+      message: {
+        messageId: pendingMessageId,
+        role: "user",
+        text: "start the pending turn",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-starting-pending-provider-match"),
+      threadId,
+      session: {
+        threadId,
+        status: "starting",
+        providerName: "opencode",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+
+    // The provider is already running a different turn than the stale abort
+    // names, so the abort must not settle the pending start.
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: liveTurnId,
+      activeTurnStartMessageId: liveMessageId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-pending-provider-mismatch"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: staleTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    let thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("starting");
+    expect(thread?.session?.activeTurnId).toBeNull();
+
+    // The same pending start is settled once the abort names the provider's
+    // pending turn with the pending message token.
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("opencode"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: "2026-01-01T00:00:02.000Z",
+      activeTurnId: liveTurnId,
+      activeTurnStartMessageId: pendingMessageId,
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-abort-pending-provider-match"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      turnId: liveTurnId,
+      payload: { reason: "Interrupted by user." },
+    });
+    await harness.drain();
+
+    thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
   it("accepts an OpenCode abort after a steer with the pending message token", async () => {
     const harness = await createHarness();
     const threadId = asThreadId("thread-1");
