@@ -31,7 +31,6 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import {
   clearPersistedServerRuntimeState,
   readPersistedServerRuntimeState,
@@ -517,7 +516,6 @@ const projectAddCommand = Command.make("add", {
           projectId,
           title,
           workspaceRoot,
-          defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
           createdAt: DateTime.formatIso(yield* DateTime.now),
         });
         return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
